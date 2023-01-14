@@ -512,6 +512,30 @@ public:
     /// Static shutdown of ray-intersection acceleration data structure
     static void static_accel_shutdown();
 
+    // trojan addition
+    std::string foreground_id() const { return m_foreground_id; }
+
+    void set_foreground_id(const std::string &id) {
+        if (id.size() == 0) {
+            Log(Warn, "invalid foreground object id!");
+            return; 
+        }
+
+        Log(Info, "set foreground object id to %s.", id);
+        m_foreground_id = id;
+
+        for (auto &s : m_shapes) {
+            if (s->is_foreground(id)) {
+                //record transform matrix
+                //n = dr::normalize(m_to_world.scalar().transform_affine(n));
+                m_fore_to_object = s->m_to_object.value();
+                break;
+            }
+        }
+    }
+
+    Transform4f fore_object_transform() const { return m_fore_to_object.value(); }
+
     MI_DECLARE_CLASS()
 protected:
     /// Virtual destructor
@@ -574,6 +598,10 @@ protected:
     ScalarFloat m_emitter_pmf;
 
     bool m_shapes_grad_enabled;
+
+    //trojan addition
+    std::string m_foreground_id = "";
+    field<Transform4f, ScalarTransform4f> m_fore_to_object;
 };
 
 /// Dummy function which can be called to ensure that the librender shared library is loaded

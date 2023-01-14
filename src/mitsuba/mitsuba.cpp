@@ -108,7 +108,7 @@ void scene_static_accel_shutdown() {
 }
 
 template <typename Float, typename Spectrum>
-void render(Object *scene_, size_t sensor_i, fs::path filename) {
+void render(Object *scene_, size_t sensor_i, fs::path filename, const std::string& fore_id) {
     auto *scene = dynamic_cast<Scene<Float, Spectrum> *>(scene_);
     if (!scene)
         Throw("Root element of the input file must be a <scene> tag!");
@@ -121,6 +121,9 @@ void render(Object *scene_, size_t sensor_i, fs::path filename) {
     auto integrator = scene->integrator();
     if (!integrator)
         Throw("No integrator specified for scene: %s", scene);
+
+    // setup fore id before rendering
+    scene->set_foreground_id(fore_id);
 
     /* critical section */ {
         std::lock_guard<std::mutex> guard(develop_callback_mutex);
@@ -181,6 +184,9 @@ int main(int argc, char *argv[]) {
     auto arg_wavefront = parser.add(StringVec{ "-W" });
     auto arg_source    = parser.add(StringVec{ "-S" });
     auto arg_vec_width = parser.add(StringVec{ "-V" }, true);
+
+    //Trojan params
+    auto arg_fore_id   = parser.add(StringVec{ "-f", "--fore" }, true);
 
     xml::ParameterList params;
     std::string error_msg, mode;
@@ -369,7 +375,12 @@ int main(int argc, char *argv[]) {
                 Throw("Root element of the input file is expanded into "
                       "multiple objects, only a single object is expected!");
 
-            MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, filename);
+            std::string fore_id;
+            if (*arg_fore_id)
+                fore_id = arg_fore_id->as_string();
+
+            MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, filename,
+                              fore_id);
             arg_extra = arg_extra->next();
         }
     } catch (const std::exception &e) {

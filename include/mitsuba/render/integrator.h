@@ -224,7 +224,7 @@ protected:
     virtual ~SamplingIntegrator();
 
     virtual void render_block(const Scene *scene,
-                              const Sensor *sensor,
+                              Sensor *sensor,
                               Sampler *sampler,
                               ImageBlock *block,
                               Float *aovs,
@@ -233,8 +233,8 @@ protected:
                               uint32_t block_id,
                               uint32_t block_size) const;
 
-    void render_sample(const Scene *scene,
-                       const Sensor *sensor,
+    virtual void render_sample(const Scene *scene,
+                       Sensor *sensor,
                        Sampler *sampler,
                        ImageBlock *block,
                        Float *aovs,

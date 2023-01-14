@@ -192,6 +192,9 @@ public:
     /// Flags for all properties combined.
     uint32_t flags() const { return m_flags; }
 
+    //trojan addition
+    virtual void set_trojan_context(void *ptr, size_t size) {}
+
     //! @}
     // =============================================================
 

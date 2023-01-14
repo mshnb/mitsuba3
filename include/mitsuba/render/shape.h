@@ -541,6 +541,10 @@ public:
     /// Return whether any shape's parameters require gradients (default return false)
     virtual bool parameters_grad_enabled() const;
 
+    // trojan addition
+    bool is_foreground(const std::string& fore_id) const { return fore_id == m_id; }
+    // Point3f get_center() const { return bbox().center(); }
+
     //! @}
     // =============================================================
 
@@ -646,6 +650,8 @@ DRJIT_VCALL_TEMPLATE_BEGIN(mitsuba::Shape)
     DRJIT_VCALL_METHOD(ray_intersect)
     DRJIT_VCALL_METHOD(ray_test)
     DRJIT_VCALL_METHOD(sample_position)
+    DRJIT_VCALL_METHOD(is_foreground)
+    DRJIT_VCALL_METHOD(get_center)
     DRJIT_VCALL_GETTER(emitter, const typename Class::Emitter *)
     DRJIT_VCALL_GETTER(sensor, const typename Class::Sensor *)
     DRJIT_VCALL_GETTER(bsdf, const typename Class::BSDF *)
@@ -655,7 +661,8 @@ DRJIT_VCALL_TEMPLATE_BEGIN(mitsuba::Shape)
     auto is_sensor() const { return neq(sensor(), nullptr); }
     auto is_medium_transition() const { return neq(interior_medium(), nullptr) ||
                                                neq(exterior_medium(), nullptr); }
-DRJIT_VCALL_TEMPLATE_END(mitsuba::Shape)
+
+    DRJIT_VCALL_TEMPLATE_END(mitsuba::Shape)
 
 //! @}
 // -----------------------------------------------------------------------

@@ -262,8 +262,8 @@ SamplingIntegrator<Float, Spectrum>::render(Scene *scene,
 
         // Potentially render multiple passes
         for (size_t i = 0; i < n_passes; i++) {
-            render_sample(scene, sensor, sampler, block,
-                          aovs.get(), pos, diff_scale_factor);
+            render_sample(scene, sensor, sampler, block, aovs.get(), pos_f,
+                          diff_scale_factor);
 
             if (n_passes > 1) {
                 sampler->advance(); // Will trigger a kernel launch of size 1
@@ -312,7 +312,7 @@ SamplingIntegrator<Float, Spectrum>::render(Scene *scene,
 }
 
 MI_VARIANT void SamplingIntegrator<Float, Spectrum>::render_block(const Scene *scene,
-                                                                   const Sensor *sensor,
+                                                                   Sensor *sensor,
                                                                    Sampler *sampler,
                                                                    ImageBlock *block,
                                                                    Float *aovs,
@@ -363,7 +363,7 @@ MI_VARIANT void SamplingIntegrator<Float, Spectrum>::render_block(const Scene *s
 
 MI_VARIANT void
 SamplingIntegrator<Float, Spectrum>::render_sample(const Scene *scene,
-                                                   const Sensor *sensor,
+                                                   Sensor *sensor,
                                                    Sampler *sampler,
                                                    ImageBlock *block,
                                                    Float *aovs,

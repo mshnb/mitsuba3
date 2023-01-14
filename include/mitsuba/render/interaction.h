@@ -258,6 +258,17 @@ struct SurfaceInteraction : Interaction<Float_, Spectrum_> {
     // Returns the BSDF of the intersected shape
     BSDFPtr bsdf() const { return shape->bsdf(); }
 
+    //trojan addition
+    Mask hit_foreground(const std::string &fore_id) const {
+        return shape->is_foreground(fore_id);
+    }
+
+    Point3f get_shape_center() const {
+        ShapePtr target =
+            dr::select(dr::eq(instance, nullptr), shape, instance);
+        return target->get_center();
+    }
+
     /// Computes texture coordinate partials
     void compute_uv_partials(const RayDifferential3f &ray) {
         if (!ray.has_differentials)
