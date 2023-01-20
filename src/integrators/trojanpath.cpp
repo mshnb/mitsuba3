@@ -19,7 +19,7 @@ template <typename Float, typename Spectrum>
 class TrojanPathIntegrator : public MonteCarloIntegrator<Float, Spectrum> {
 public:
     MI_IMPORT_BASE(MonteCarloIntegrator, m_max_depth, m_rr_depth, m_hide_emitters)
-    MI_IMPORT_TYPES(Scene, Sampler, Medium, Emitter, EmitterPtr, BSDF, BSDFPtr, ShapePtr)
+    MI_IMPORT_TYPES(Scene, Sampler, Medium, Emitter, EmitterPtr, BSDF, BSDFPtr, ShapePtr, Sensor, ImageBlock, Film)
     using TrojanContext = TrojanContext<Float, Spectrum>;
 
     TrojanPathIntegrator(const Properties &props) : Base(props) {}
