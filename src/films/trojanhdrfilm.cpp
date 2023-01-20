@@ -159,9 +159,20 @@ public:
                               warn /* warn_invalid */);
     }
     
+    bool check_trojan_context() override {
+        return m_trojan_context_ptr != nullptr;
+    }
+
     void set_trojan_context(void *ptr, size_t size) override {
         m_trojan_context_ptr = ptr;
         m_trojan_context_size = size;
+    }
+
+    void put_trojan_context(void *ptr, size_t size, uint32_t offset) override {
+        Assert(m_trojan_context_ptr != nullptr);
+
+        //std::lock_guard<std::mutex> lock(m_mutex);
+        memcpy((char*)m_trojan_context_ptr + offset, ptr, size);
     }
 
     void put_block(const ImageBlock *block) override {

@@ -95,6 +95,9 @@ public:
     /// \brief Cancel a running render job (e.g. after receiving Ctrl-C)
     virtual void cancel();
 
+    //trojan addition
+    virtual void init_trojan(Sensor *sensor, uint32_t spp = 1);
+
     /**
      * Indicates whether \ref cancel() or a timeout have occurred. Should be
      * checked regularly in the integrator's main loop so that timeouts are
@@ -154,7 +157,7 @@ protected:
 template <typename Float, typename Spectrum>
 class MI_EXPORT_LIB SamplingIntegrator : public Integrator<Float, Spectrum> {
 public:
-    MI_IMPORT_BASE(Integrator, should_stop, aov_names,
+    MI_IMPORT_BASE(Integrator, should_stop, init_trojan, aov_names,
                     m_stop, m_timeout, m_render_timer, m_hide_emitters)
     MI_IMPORT_TYPES(Scene, Sensor, Film, ImageBlock, Medium, Sampler)
 
@@ -240,6 +243,7 @@ protected:
                        Float *aovs,
                        const Vector2f &pos,
                        ScalarFloat diff_scale_factor,
+                       uint32_t sample_id = 0,
                        Mask active = true) const;
 
 protected:

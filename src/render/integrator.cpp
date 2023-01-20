@@ -49,6 +49,8 @@ MI_VARIANT void Integrator<Float, Spectrum>::cancel() {
     m_stop = true;
 }
 
+MI_VARIANT void Integrator<Float, Spectrum>::init_trojan(Sensor *sensor, uint32_t spp) { }
+
 // -----------------------------------------------------------------------------
 
 MI_VARIANT SamplingIntegrator<Float, Spectrum>::SamplingIntegrator(const Properties &props)
@@ -109,6 +111,9 @@ SamplingIntegrator<Float, Spectrum>::render(Scene *scene,
 
     TensorXf result;
     if constexpr (!dr::is_jit_v<Float>) {
+        //trojan addition
+        init_trojan(sensor, spp);
+
         // Render on the CPU using a spiral pattern
         uint32_t n_threads = (uint32_t) Thread::thread_count();
 
@@ -369,6 +374,7 @@ SamplingIntegrator<Float, Spectrum>::render_sample(const Scene *scene,
                                                    Float *aovs,
                                                    const Vector2f &pos,
                                                    ScalarFloat diff_scale_factor,
+                                                   uint32_t sample_id,
                                                    Mask active) const {
     const Film *film = sensor->film();
     const bool has_alpha = has_flag(film->flags(), FilmFlags::Alpha);

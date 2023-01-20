@@ -193,7 +193,11 @@ public:
     uint32_t flags() const { return m_flags; }
 
     //trojan addition
+    virtual bool check_trojan_context() { return false; }
+
     virtual void set_trojan_context(void *ptr, size_t size) {}
+
+    virtual void put_trojan_context(void *ptr, size_t size, uint32_t offset = 0) {}
 
     //! @}
     // =============================================================

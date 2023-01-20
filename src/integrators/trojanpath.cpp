@@ -18,16 +18,81 @@ NAMESPACE_BEGIN(mitsuba)
 template <typename Float, typename Spectrum>
 class TrojanPathIntegrator : public MonteCarloIntegrator<Float, Spectrum> {
 public:
-    MI_IMPORT_BASE(MonteCarloIntegrator, m_max_depth, m_rr_depth, m_hide_emitters)
+    MI_IMPORT_BASE(MonteCarloIntegrator, should_stop, m_max_depth, m_rr_depth, m_hide_emitters)
     MI_IMPORT_TYPES(Scene, Sampler, Medium, Emitter, EmitterPtr, BSDF, BSDFPtr, ShapePtr, Sensor, ImageBlock, Film)
     using TrojanContext = TrojanContext<Float, Spectrum>;
 
     TrojanPathIntegrator(const Properties &props) : Base(props) {}
 
+    void init_trojan(Sensor *sensor, uint32_t spp) override {
+        Film *film        = sensor->film();
+        if(film->check_trojan_context())
+            return;
+
+        size_t size_flat  = spp * dr::prod(film->crop_size());
+        size_t size_total = size_flat * sizeof(TrojanContext);
+
+        ScalarFloat *trojan_host =
+            (ScalarFloat *) jit_malloc(AllocType::Host, size_total);
+
+        memset(trojan_host, 0, size_total);
+        
+        film->set_trojan_context(trojan_host, size_total);
+    }
+
+    void render_block(const Scene *scene,
+                              Sensor *sensor,
+                              Sampler *sampler,
+                              ImageBlock *block,
+                              Float *aovs,
+                              uint32_t sample_count,
+                              uint32_t seed,
+                              uint32_t block_id,
+                              uint32_t block_size) const override {
+        if constexpr (!dr::is_array_v<Float>) {
+            uint32_t pixel_count = block_size * block_size;
+
+            // Avoid overlaps in RNG seeding RNG when a seed is manually specified
+            seed += block_id * pixel_count;
+
+            // Scale down ray differentials when tracing multiple rays per pixel
+            Float diff_scale_factor = dr::rsqrt((Float) sample_count);
+
+            // Clear block (it's being reused)
+            block->clear();
+
+            for (uint32_t i = 0; i < pixel_count && !should_stop(); ++i) {
+                sampler->seed(seed + i);
+
+                Point2u pos = dr::morton_decode<Point2u>(i);
+                if (dr::any(pos >= block->size()))
+                    continue;
+
+                ScalarPoint2f pos_f = ScalarPoint2f(Point2i(pos) + block->offset());
+                for (uint32_t j = 0; j < sample_count && !should_stop(); ++j) {
+                    render_sample(scene, sensor, sampler, block, aovs,
+                                pos_f, diff_scale_factor, j);
+                    sampler->advance();
+                }
+            }
+        } else {
+            DRJIT_MARK_USED(scene);
+            DRJIT_MARK_USED(sensor);
+            DRJIT_MARK_USED(sampler);
+            DRJIT_MARK_USED(block);
+            DRJIT_MARK_USED(aovs);
+            DRJIT_MARK_USED(sample_count);
+            DRJIT_MARK_USED(seed);
+            DRJIT_MARK_USED(block_id);
+            DRJIT_MARK_USED(block_size);
+            Throw("Not implemented for JIT arrays.");
+        }
+    }
+
     void render_sample(
         const Scene *scene, Sensor *sensor, Sampler *sampler,
         ImageBlock *block, Float *aovs, const Vector2f &pos, ScalarFloat diff_scale_factor,
-                            Mask active = true) const override {
+                            uint32_t sample_id, Mask active = true) const override {
         Film *film     = sensor->film();
         const bool has_alpha = has_flag(film->flags(), FilmFlags::Alpha);
 
@@ -94,39 +159,62 @@ public:
         block->put(sample_pos, aovs, active);
 
         //trojan result
-        if constexpr (dr::is_jit_v<Float>)
-            dr::sync_thread();
-
         uint32_t spp      = sampler->sample_count();
         size_t size_flat  = spp * dr::prod(film->crop_size());
         size_t size_total = size_flat * sizeof(TrojanContext);
-        ScalarFloat *trojan_device =
-            (ScalarFloat *) jit_malloc(AllocType::Device, size_total);
 
-        Transform4f fore_object_transform = scene->fore_object_transform();
-//         Mask hit_fore                     = trojan.throughput > 0;
-//         Vector3f fore_space_d = dr::select(hit_fore, dr::normalize(
-//             fore_object_transform.transform_affine(trojan.refract_d)), Vector3f(0.f));
-        
-        Vector3f fore_space_d = dr::normalize(
-                fore_object_transform.transform_affine(trojan.refract_d));
-        fore_space_d =
-            dr::select(dr::isfinite(fore_space_d), fore_space_d, Vector3f(0.f));
+        if constexpr (dr::is_jit_v<Float>)
+        {
+            dr::sync_thread();
 
-        uint32_t idx = 0;
-        dr::store(trojan_device + size_flat * idx++, trojan.throughput);
-        dr::store(trojan_device + size_flat * idx++, trojan.s_uv.x());
-        dr::store(trojan_device + size_flat * idx++, trojan.s_uv.y());
-        dr::store(trojan_device + size_flat * idx++, trojan.d_uv.x());
-        dr::store(trojan_device + size_flat * idx++, trojan.d_uv.y());
-        dr::store(trojan_device + size_flat * idx++, fore_space_d.x());
-        dr::store(trojan_device + size_flat * idx++, fore_space_d.y());
-        dr::store(trojan_device + size_flat * idx++, fore_space_d.z());
+            ScalarFloat *trojan_device =
+                (ScalarFloat *) jit_malloc(AllocType::Device, size_total);
 
-        ScalarFloat *trojan_host =
-            (ScalarFloat *) jit_malloc_migrate(trojan_device, AllocType::Host, 1);
+            Transform4f fore_object_transform = scene->fore_object_transform();
+            Vector3f fore_space_d = dr::normalize(
+                    fore_object_transform.transform_affine(trojan.refract_d));
+            fore_space_d =
+                dr::select(dr::isfinite(fore_space_d), fore_space_d, Vector3f(0.f));
 
-        film->set_trojan_context(trojan_host, size_total);
+            uint32_t idx = 0;
+            dr::store(trojan_device + size_flat * idx++, trojan.throughput);
+            dr::store(trojan_device + size_flat * idx++, trojan.s_uv.x());
+            dr::store(trojan_device + size_flat * idx++, trojan.s_uv.y());
+            dr::store(trojan_device + size_flat * idx++, trojan.d_uv.x());
+            dr::store(trojan_device + size_flat * idx++, trojan.d_uv.y());
+            dr::store(trojan_device + size_flat * idx++, fore_space_d.x());
+            dr::store(trojan_device + size_flat * idx++, fore_space_d.y());
+            dr::store(trojan_device + size_flat * idx++, fore_space_d.z());
+
+            ScalarFloat *trojan_host =
+                (ScalarFloat *) jit_malloc_migrate(trojan_device, AllocType::Host, 1);
+
+            film->set_trojan_context(trojan_host, size_total);
+        }
+        else
+        {
+            Transform4f fore_object_transform = scene->fore_object_transform();
+            Vector3f fore_space_d = dr::normalize(
+                    fore_object_transform.transform_affine(trojan.refract_d));
+            fore_space_d =
+                dr::select(dr::isfinite(fore_space_d), fore_space_d, Vector3f(0.f));
+
+            ScalarVector2u crop_size = film->crop_size();
+            ScalarPoint2u pixel_offset = ScalarPoint2u(floor(pos.x()), floor(pos.y()));
+
+            uint32_t pixel_index = pixel_offset.y() * crop_size.x() + pixel_offset.x();
+            uint32_t sample_index = pixel_index * spp + sample_id;
+
+            uint32_t idx = 0;
+            film->put_trojan_context(&trojan.throughput, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&trojan.s_uv + 0, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&trojan.s_uv + 1, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&trojan.d_uv + 0, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&trojan.d_uv + 1, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&fore_space_d + 0, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&fore_space_d + 1, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+            film->put_trojan_context((ScalarFloat*)&fore_space_d + 2, sizeof(ScalarFloat), (sample_index + size_flat * idx++) * sizeof(ScalarFloat));
+        }
     }
 
     std::pair<Spectrum, Bool> sample(const Scene *scene, Sampler *sampler,
