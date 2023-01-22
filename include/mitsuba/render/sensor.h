@@ -18,7 +18,7 @@ template <typename Float, typename Spectrum>
 class MI_EXPORT_LIB Sensor : public Endpoint<Float, Spectrum> {
 public:
     MI_IMPORT_TYPES(Film, Sampler, Texture)
-    MI_IMPORT_BASE(Endpoint, sample_ray, m_needs_sample_3)
+    MI_IMPORT_BASE(Endpoint, sample_ray, m_to_world, m_needs_sample_3)
 
     // =============================================================
     //! @{ \name Sensor-specific sampling functions
@@ -147,6 +147,27 @@ public:
         m_resolution = ScalarVector2f(m_film->crop_size());
     }
 
+    //trojan addition
+    //rot_x around x axis(right), rot_y around y axis(up)
+    void update_lookat(ScalarFloat rot_x, ScalarFloat rot_y) {
+        using Transform4f = Transform<Point<ScalarFloat, 4>>;
+
+        //ScalarVector3f fore_t_cam = m_lookat_origin - m_lookat_target;
+        //ScalarFloat dist = dr::norm(fore_t_cam);
+
+        ScalarPoint3f rotated_pos = m_lookat_origin;
+
+        //map [0, 1] to [-1, 1]
+        rot_x = rot_x * 2.f - 1.f;
+        rotated_pos = Transform4f::rotate(ScalarVector3f(1,0,0), 90.f * rot_x) * rotated_pos;
+
+        if (rot_y > 0.f) {
+            rotated_pos = Transform4f::rotate(ScalarVector3f(0,1,0), 360.f * rot_y) * rotated_pos;
+        }
+
+        m_to_world = Transform4f::look_at(rotated_pos, m_lookat_target, m_lookat_up);
+    }
+
     DRJIT_VCALL_REGISTER(Float, mitsuba::Sensor)
     MI_DECLARE_CLASS()
 protected:
@@ -162,6 +183,11 @@ protected:
     ScalarFloat m_shutter_open_time;
     ref<const Texture> m_srf;
     bool m_alpha;
+
+    //trojan addition
+    ScalarPoint3f m_lookat_origin;
+    ScalarPoint3f m_lookat_target;
+    ScalarVector3f m_lookat_up;
 };
 
 //! @}

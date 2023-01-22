@@ -71,6 +71,11 @@ MI_VARIANT Sensor<Float, Spectrum>::Sensor(const Properties &props) : Base(props
             m_srf = m_film->sensor_response_function();
         }
     }
+
+    //trojan addition
+    m_lookat_origin = props.get<ScalarPoint3f>("lookat_origin", ScalarPoint3f(0.f, 0.f, 0.f));
+    m_lookat_target= props.get<ScalarPoint3f>("lookat_target", ScalarPoint3f(0.f, 0.f, 0.f));
+    m_lookat_up = props.get<ScalarVector3f>("lookat_up", ScalarVector3f(0.f, 1.f, 0.f));
 }
 
 MI_VARIANT Sensor<Float, Spectrum>::~Sensor() {}

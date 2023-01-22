@@ -925,6 +925,11 @@ static std::pair<std::string, std::string> parse_xml(XMLSource &src, XMLParseCon
                     if (dr::any_nested(dr::isnan(result.matrix)))
                         src.throw_error(node, "invalid lookat transformation");
                     ctx.transform = result * ctx.transform;
+
+                    //trojan addition
+                    props.set_array3f("lookat_origin", origin);
+                    props.set_array3f("lookat_target", target);
+                    props.set_array3f("lookat_up", up);
                 }
                 break;
 

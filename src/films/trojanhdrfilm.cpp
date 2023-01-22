@@ -478,6 +478,7 @@ public:
             fs->write(m_trojan_context_ptr, m_trojan_context_size);
 
             fs->close();
+
             jit_free(m_trojan_context_ptr);
         }
     }

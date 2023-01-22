@@ -10,6 +10,7 @@
 #include <mitsuba/core/util.h>
 #include <mitsuba/core/vector.h>
 #include <mitsuba/core/xml.h>
+#include <mitsuba/core/string.h>
 #include <mitsuba/render/integrator.h>
 #include <mitsuba/render/records.h>
 #include <mitsuba/render/scene.h>
@@ -108,7 +109,9 @@ void scene_static_accel_shutdown() {
 }
 
 template <typename Float, typename Spectrum>
-void render(Object *scene_, size_t sensor_i, fs::path filename, const std::string& fore_id) {
+void render(Object *scene_, size_t sensor_i, fs::path filename, 
+            const std::string& fore_id, float rot_x = 0.f, 
+            float rot_y = 0.f) {
     auto *scene = dynamic_cast<Scene<Float, Spectrum> *>(scene_);
     if (!scene)
         Throw("Root element of the input file must be a <scene> tag!");
@@ -124,6 +127,10 @@ void render(Object *scene_, size_t sensor_i, fs::path filename, const std::strin
 
     // setup fore id before rendering
     scene->set_foreground_id(fore_id);
+    auto sensor = scene->sensors()[sensor_i];
+
+    //generate multi views data
+    sensor->update_lookat(rot_x, rot_y);
 
     /* critical section */ {
         std::lock_guard<std::mutex> guard(develop_callback_mutex);
@@ -142,6 +149,7 @@ void render(Object *scene_, size_t sensor_i, fs::path filename, const std::strin
     }
 
     film->write(filename);
+    film->set_trojan_context(nullptr, 0);
 }
 
 #if !defined(_WIN32)
@@ -186,7 +194,9 @@ int main(int argc, char *argv[]) {
     auto arg_vec_width = parser.add(StringVec{ "-V" }, true);
 
     //Trojan params
-    auto arg_fore_id   = parser.add(StringVec{ "-f", "--fore" }, true);
+    auto arg_fore_id   = parser.add(StringVec{ "-f", "--fore_id" }, true);
+    auto arg_cam_rotx  = parser.add(StringVec{ "-rx", "--cam_rotx" }, true);
+    auto arg_cam_roty  = parser.add(StringVec{ "-ry", "--cam_roty" }, true);
 
     xml::ParameterList params;
     std::string error_msg, mode;
@@ -379,8 +389,32 @@ int main(int argc, char *argv[]) {
             if (*arg_fore_id)
                 fore_id = arg_fore_id->as_string();
 
-            MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, filename,
-                              fore_id);
+            uint32_t view_count_x = 1, view_count_y = 1;
+            if (*arg_cam_rotx)
+                view_count_x = arg_cam_rotx->as_int();
+            if (*arg_cam_roty)
+                view_count_y = arg_cam_roty->as_int();
+
+            uint32_t view_count_total = view_count_x * view_count_y;
+            if (view_count_total > 1) {
+                for (uint32_t i=0;i<view_count_total;i++) {
+                    uint32_t idx_x = i % view_count_x, idx_y = i / view_count_x;
+
+                    //ignore top and bottom view
+                    float rot_x = (float)(idx_x + 1) / (view_count_x + 1);
+                    float rot_y = (float)idx_y / view_count_y;
+
+                    std::string viewname = filename.string();
+                    string::replace_inplace(viewname, std::string(".exr"), "_" + std::to_string(i) + ".exr");
+                    MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, fs::path(viewname),
+                            fore_id, rot_x, rot_y);     
+                }
+            }
+            else {
+                MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, filename,
+                                  fore_id, 0.f, 0.f);
+            }
+
             arg_extra = arg_extra->next();
         }
     } catch (const std::exception &e) {

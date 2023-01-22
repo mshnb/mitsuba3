@@ -230,16 +230,16 @@ public:
 
     std::tuple<Spectrum, TrojanContext, Bool>
     sample_trojan(const Scene *scene,
-                                     Sampler *sampler,
-                                     const RayDifferential3f &ray_,
-                                     const Medium * /* medium */,
-                                     Float * /* aovs */,
-                                     Bool active) const {
+                    Sampler *sampler,
+                    const RayDifferential3f &ray_,
+                    const Medium * /* medium */,
+                    Float * /* aovs */,
+                    Bool active) const {
         MI_MASKED_FUNCTION(ProfilerPhase::SamplingIntegratorSample, active);
 
         //training: d_uv and refract_d should be the first refraction(after entering fore obj)
         //no training: d_uv and refract_d should be the lastest refraction(leaving fore obj)
-        const bool bTrainging = false;
+        const bool bTrainging = true;
 
         if (unlikely(m_max_depth == 0))
             return { 0.f, TrojanContext(), false };
