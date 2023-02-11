@@ -511,7 +511,7 @@ protected:
     mutable std::mutex m_mutex;
     std::vector<std::string> m_channels;
 
-    void *m_trojan_context_ptr;
+    void *m_trojan_context_ptr = nullptr;
     size_t m_trojan_context_size;
 };
 
