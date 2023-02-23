@@ -18,11 +18,20 @@ NAMESPACE_BEGIN(mitsuba)
 template <typename Float, typename Spectrum>
 class TrojanPathIntegrator : public MonteCarloIntegrator<Float, Spectrum> {
 public:
-    MI_IMPORT_BASE(MonteCarloIntegrator, should_stop, m_max_depth, m_rr_depth, m_hide_emitters)
+    MI_IMPORT_BASE(MonteCarloIntegrator, should_stop, m_max_depth, m_rr_depth,
+                   m_tir_depth, m_merge_tir, m_hide_emitters)
     MI_IMPORT_TYPES(Scene, Sampler, Medium, Emitter, EmitterPtr, BSDF, BSDFPtr, ShapePtr, Sensor, ImageBlock, Film)
     using TrojanContext = TrojanContext<Float, Spectrum>;
 
-    TrojanPathIntegrator(const Properties &props) : Base(props) {}
+    TrojanPathIntegrator(const Properties &props) : Base(props) {
+        int tir_depth = props.get<int>("tir", 0);
+        if (tir_depth < 0)
+            Throw("\"tir_depth\" must be a value >= 0");
+
+        m_tir_depth = (uint32_t) tir_depth;
+
+        m_merge_tir = props.get<bool>("merge_tir", false);
+    }
 
     void init_trojan(Sensor *sensor, uint32_t spp) override {
         Film *film        = sensor->film();
@@ -237,10 +246,6 @@ public:
                     Bool active) const {
         MI_MASKED_FUNCTION(ProfilerPhase::SamplingIntegratorSample, active);
 
-        //training: d_uv and refract_d should be the first refraction(after entering fore obj)
-        //no training: d_uv and refract_d should be the lastest refraction(leaving fore obj)
-        const bool bTrainging = true;
-
         if (unlikely(m_max_depth == 0))
             return { 0.f, TrojanContext(), false };
 
@@ -251,6 +256,7 @@ public:
         Spectrum result               = 0.f;
         Float eta                     = 1.f;
         UInt32 depth                  = 0;
+        UInt32 tir                    = 0;
 
         // If m_hide_emitters == false, the environment emitter will be visible
         Mask valid_ray                = !m_hide_emitters && dr::neq(scene->environment(), nullptr);
@@ -263,7 +269,8 @@ public:
         BSDFContext   bsdf_ctx;
 
         // trojan addition information
-        Bool primary_enter_fore      = false;
+        Bool recording               = false;
+        Vector2f prev_src_uv         = 0.f;
         Vector3f prev_ray_dir        = 0.f;
         TrojanContext trojan_result  = dr::zeros<TrojanContext>();
 
@@ -278,9 +285,9 @@ public:
            the loop state variables. This is crucial: omitting a variable may
            lead to undefined behavior. */
         dr::Loop<Bool> loop("Trojan Path Tracer", sampler, ray, throughput,
-                            result, eta, depth, valid_ray, prev_si, prev_bsdf_pdf,
-                            prev_bsdf_delta, primary_enter_fore,
-                            prev_ray_dir, trojan_result, active);
+                            result, eta, depth, tir, valid_ray, prev_si,
+                            prev_bsdf_pdf, prev_bsdf_delta, recording,
+                            prev_src_uv, prev_ray_dir, trojan_result, active);
 
         /* Inform the loop about the maximum number of loop iterations.
            This accelerates wavefront-style rendering by avoiding costly
@@ -322,7 +329,7 @@ public:
             }
 
             // Continue tracing the path at this point?
-            Bool active_next = (depth + 1 < m_max_depth) && si.is_valid();
+            Bool active_next = (depth + 1 < m_max_depth) && si.is_valid() && (tir <= m_tir_depth);
 
             if (dr::none_or<false>(active_next))
                 break; // early exit for scalar mode
@@ -387,68 +394,57 @@ public:
             }
 
             // ------ Update loop variables based on current interaction ------
-
-            // trojan addition
-            // TODO:use mask instead of Bool and Mask variables
-            // check refraction with foreground's surface
-            Bool through_fore_by_refract = active_next &&
-                has_flag(bsdf_sample.sampled_type, BSDFFlags::Transmission) &&
-                si.hit_foreground(scene->foreground_id());
-
-            // first enter foreground object
-            Mask primary_mask = dr::eq(depth, 0u) && through_fore_by_refract;
-            if (dr::any_or<true>(primary_mask)) {
-                dr::masked(primary_enter_fore, primary_mask) = true;
-                trojan_result.s_uv[primary_mask] = si.uv;
-            }
-
-            Mask secondary_mask = false; 
-            if constexpr (bTrainging) {
-                // TODO: DeltaReflection?
-                Bool total_interal_reflection =
-                    has_flag(bsdf_sample.sampled_type, BSDFFlags::Reflection);
-                secondary_mask = dr::eq(depth, 1u) && primary_enter_fore &&
-                    (through_fore_by_refract || total_interal_reflection);
-            } else
-                secondary_mask = dr::eq(depth, 1u) && primary_enter_fore &&
-                                 through_fore_by_refract;
-
-            if (dr::any_or<true>(secondary_mask)) {
-                // TODO: use some mask or tag to mark TIR?
-                // throughput = 1.f shows valid for training
-                dr::masked(trojan_result.throughput, secondary_mask) = 1.f;
-
-                trojan_result.d_uv[secondary_mask]      = si.uv;
-                trojan_result.refract_d[secondary_mask] = prev_ray_dir;
-
-                // stop recording other data
-                if constexpr (bTrainging)
-                    dr::masked(primary_enter_fore, secondary_mask) = false;
-            }
-
-            if constexpr (!bTrainging) {
-                // (after n bounces) final leave fore by refract
-                Mask final_mask = (depth > 1u) && primary_enter_fore &&
-                                  through_fore_by_refract;
-                if (dr::any_or<true>(final_mask)) {
-                    // use this info only for rendering instead of training
-                    dr::masked(primary_enter_fore, final_mask) = false;
-
-                    trojan_result.d_uv[final_mask]      = si.uv;
-                    trojan_result.refract_d[final_mask] = prev_ray_dir;
-                }
-            }
-
             throughput *= bsdf_weight;
             eta *= bsdf_sample.eta;
             valid_ray |= active && si.is_valid() &&
                          !has_flag(bsdf_sample.sampled_type, BSDFFlags::Null);
 
+            // trojan addition
+            Mask hit_fore =
+                active_next && si.hit_foreground(scene->foreground_id());
+
+            Mask first_refract = dr::eq(depth, 0u) &&
+                has_flag(bsdf_sample.sampled_type, BSDFFlags::Transmission);
+
+            // record start
+            Mask enter_fore = hit_fore && first_refract;
+            if (dr::any_or<true>(enter_fore)) {
+                dr::masked(recording, enter_fore) = true;
+            }
+
+            Mask subsequent_tir = hit_fore && depth > 0u &&
+                has_flag(bsdf_sample.sampled_type, BSDFFlags::DeltaReflection);
+            dr::masked(tir, recording && subsequent_tir) += 1;
+
+            Mask leave_fore  = depth > 0u &&
+                has_flag(bsdf_sample.sampled_type, BSDFFlags::Transmission);
+            Mask reach_tir      = depth > 0u && (m_tir_depth == 0 || tir > m_tir_depth);
+            Mask stop_record    = hit_fore && recording && (leave_fore || reach_tir);
+            if (dr::any_or<true>(stop_record)) {
+                // record merged data
+                Mask record = stop_record;
+
+                //only record target tir bounce
+                dr::masked(record, !m_merge_tir) = record && reach_tir;
+
+                //TODO current throughput = 1.f shows valid for training
+                dr::masked(trojan_result.throughput, record) = 1.f;
+
+                trojan_result.s_uv[record]         = prev_src_uv;
+                trojan_result.refract_d[record]    = prev_ray_dir;
+                trojan_result.d_uv[record]         = si.uv;
+
+                // stop recording other data
+                dr::masked(recording, stop_record) = false;
+            }
+
+            prev_src_uv       = si.uv;
+            prev_ray_dir      = ray.d;
+
             // Information about the current vertex needed by the next iteration
             prev_si = si;
             prev_bsdf_pdf = bsdf_sample.pdf;
             prev_bsdf_delta = has_flag(bsdf_sample.sampled_type, BSDFFlags::Delta);
-            prev_ray_dir = ray.d;
 
             // -------------------- Stopping criterion ---------------------
 
@@ -456,17 +452,16 @@ public:
 
             Float throughput_max = dr::max(unpolarized_spectrum(throughput));
 
-            Float rr_prob = dr::minimum(throughput_max * dr::sqr(eta), .95f);
-            Mask rr_active = depth >= m_rr_depth,
-                 rr_continue = sampler->next_1d() < rr_prob;
+            //Float rr_prob = dr::minimum(throughput_max * dr::sqr(eta), .95f);
+            //Mask rr_active = depth >= m_rr_depth,
+            //     rr_continue = sampler->next_1d() < rr_prob;
 
-            /* Differentiable variants of the renderer require the the russian
-               roulette sampling weight to be detached to avoid bias. This is a
-               no-op in non-differentiable variants. */
-            throughput[rr_active] *= dr::rcp(dr::detach(rr_prob));
+            ///* Differentiable variants of the renderer require the the russian
+            //   roulette sampling weight to be detached to avoid bias. This is a
+            //   no-op in non-differentiable variants. */
+            //throughput[rr_active] *= dr::rcp(dr::detach(rr_prob));
 
-            active = active_next && (!rr_active || rr_continue) &&
-                     dr::neq(throughput_max, 0.f);
+            active = active_next && dr::neq(throughput_max, 0.f);
         }
 
         return {

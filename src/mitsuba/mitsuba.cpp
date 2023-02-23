@@ -412,7 +412,7 @@ int main(int argc, char *argv[]) {
             }
             else {
                 MI_INVOKE_VARIANT(mode, render, parsed[0].get(), sensor_i, filename,
-                                  fore_id, 0.f, 0.f);
+                                  fore_id, 0.5f, 1.0f);
             }
 
             arg_extra = arg_extra->next();
